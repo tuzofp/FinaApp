@@ -17,24 +17,17 @@ def inicializar_bd():
     cursor.execute("CREATE TABLE IF NOT EXISTS deudas (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, tipo TEXT NOT NULL, saldo REAL NOT NULL, tasa_anual REAL NOT NULL, pago_minimo REAL NOT NULL)")
     cursor.execute("CREATE TABLE IF NOT EXISTS ahorro (id INTEGER PRIMARY KEY AUTOINCREMENT, monto_mensual REAL NOT NULL, tasa_inflacion REAL NOT NULL, tasa_rendimiento REAL NOT NULL, pct_renta_variable REAL DEFAULT 0.0, rend_variable_est REAL DEFAULT 12.0, volatilidad_est REAL DEFAULT 15.0)")
     cursor.execute("CREATE TABLE IF NOT EXISTS pagos_historicos (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL, deuda_nombre TEXT NOT NULL, monto_pagado REAL NOT NULL, notas TEXT)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS eventos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE, presupuesto_limite REAL NOT NULL)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS gastos_evento (id INTEGER PRIMARY KEY AUTOINCREMENT, evento_id INTEGER NOT NULL, concepto TEXT NOT NULL, monto REAL NOT NULL, FOREIGN KEY (evento_id) REFERENCES eventos(id) ON DELETE CASCADE)")
     
-    # 6. NUEVA TABLA: Eventos Especiales
+    # 8. NUEVA TABLA: Flujo de Caja Diario (Transacciones Rápidas)
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS eventos (
+        CREATE TABLE IF NOT EXISTS flujo_diario (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre TEXT NOT NULL UNIQUE,
-            presupuesto_limite REAL NOT NULL
-        )
-    """)
-    
-    # 7. NUEVA TABLA: Gastos por Evento
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS gastos_evento (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            evento_id INTEGER NOT NULL,
+            fecha TEXT NOT NULL,
+            tipo TEXT NOT NULL, -- 'Ingreso' o 'Egreso'
             concepto TEXT NOT NULL,
-            monto REAL NOT NULL,
-            FOREIGN KEY (evento_id) REFERENCES eventos(id) ON DELETE CASCADE
+            monto REAL NOT NULL
         )
     """)
     
@@ -49,7 +42,7 @@ def inicializar_bd():
     conn.commit()
     conn.close()
 
-# --- FUNCIONES DE PERSISTENCIA ANTERIORES ---
+# --- FUNCIONES DE PERSISTENCIA ---
 def obtener_datos():
     conn = conectar()
     cursor = conn.cursor()
@@ -102,7 +95,6 @@ def limpiar_bitacora():
     conn.commit()
     conn.close()
 
-# --- NUEVAS FUNCIONES PARA EL CONTROL DE EVENTOS ---
 def crear_evento(nombre, presupuesto):
     conn = conectar()
     cursor = conn.cursor()
@@ -110,7 +102,7 @@ def crear_evento(nombre, presupuesto):
         cursor.execute("INSERT INTO eventos (nombre, presupuesto_limite) VALUES (?, ?)", (nombre, presupuesto))
         conn.commit()
     except sqlite3.IntegrityError:
-        pass # Si el evento ya existe, lo ignoramos de forma segura
+        pass
     conn.close()
 
 def eliminar_evento(evento_id):
@@ -132,7 +124,7 @@ def obtener_eventos():
 def agregar_gasto_evento(evento_id, concepto, monto):
     conn = conectar()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO gastos_evento (evento_id, concepto, monto) VALUES (?, ?, ?)", (evento_id, concepto, monto))
+    cursor.execute("INSERT INTO gastos_evento (evento_id, concepto, monto) VALUES (?, ?)", (evento_id, concepto, monto))
     conn.commit()
     conn.close()
 
@@ -143,3 +135,37 @@ def obtener_gastos_de_evento(evento_id):
     rows = cursor.fetchall()
     conn.close()
     return pd.DataFrame(rows, columns=["Concepto Gasto", "Monto ($)"])
+
+# --- NUEVAS FUNCIONES: FLUJO DIARIO DE CAJA ---
+def registrar_transaccion_diaria(tipo, concepto, monto):
+    conn = conectar()
+    cursor = conn.cursor()
+    fecha_actual = datetime.now().strftime("%Y-%m-%d")
+    cursor.execute("INSERT INTO flujo_diario (fecha, tipo, concepto, monto) VALUES (?, ?, ?, ?)", (fecha_actual, tipo, concepto, monto))
+    conn.commit()
+    conn.close()
+
+def obtener_transacciones_diarias():
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, fecha, tipo, concepto, monto FROM flujo_diario ORDER BY id DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return pd.DataFrame(rows, columns=["ID", "Fecha", "Tipo", "Concepto", "Monto ($)"])
+
+def eliminar_transaccion_diaria(trans_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM flujo_diario WHERE id = ?", (trans_id,))
+    conn.commit()
+    conn.close()
+
+def obtener_totales_diarios():
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("SELECT SUM(monto) FROM flujo_diario WHERE tipo = 'Ingreso'")
+    ingresos = cursor.fetchone()[0] or 0.0
+    cursor.execute("SELECT SUM(monto) FROM flujo_diario WHERE tipo = 'Egreso'")
+    egresos = cursor.fetchone()[0] or 0.0
+    conn.close()
+    return ingresos, egresos
